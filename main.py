@@ -23,11 +23,15 @@ BUTTONS = InlineKeyboardMarkup([
 # -------------------- URL Detection --------------------
 URL_REGEX = re.compile(r"(https?://[^\s]+)")
 
+# -------------------- Sanitize Filename --------------------
+def sanitize_filename(name: str) -> str:
+    return re.sub(r'[\\/*?:"<>|]', "", name)
+
 # -------------------- Download Helper --------------------
 async def download_media(url: str):
     ydl_opts = {
         "format": "best",
-        "outtmpl": f"/tmp/%(title)s.%(ext)s",  # Railway ephemeral folder
+        "outtmpl": f"/tmp/%(title)s.%(ext)s",
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
@@ -40,7 +44,9 @@ async def download_media(url: str):
         )
         if info is None:
             return None, None
-        file_path = f"/tmp/{info['title']}.{info.get('ext','mp4')}"
+        title = sanitize_filename(info.get('title', 'file'))
+        ext = info.get('ext', 'mp4')
+        file_path = f"/tmp/{title}.{ext}"
         return info, file_path
     except Exception:
         return None, None
@@ -54,8 +60,8 @@ async def auto_download(client: Client, message: Message):
     status_msg = await message.reply_text("🔄 Downloading media...")
     for url in urls:
         info, file_path = await download_media(url)
-        if not info or not os.path.exists(file_path):
-            await message.reply_text(f"❌ Failed to download or unsupported link:\n{url}")
+        if not info or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            await message.reply_text(f"❌ Failed to download or empty file:\n{url}")
             continue
 
         caption = f"**Title:** {info.get('title','N/A')}\n" \
