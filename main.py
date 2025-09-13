@@ -27,14 +27,23 @@ URL_REGEX = re.compile(r"(https?://[^\s]+)")
 async def download_media(url: str):
     ydl_opts = {
         "format": "best",
-        "outtmpl": f"/tmp/%(title)s.%(ext)s",  # Railway uses ephemeral /tmp folder
+        "outtmpl": f"/tmp/%(title)s.%(ext)s",  # Railway ephemeral folder
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "ignoreerrors": True
     }
     loop = asyncio.get_event_loop()
-    info = await loop.run_in_executor(None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(url, download=True))
-    return info
+    try:
+        info = await loop.run_in_executor(
+            None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(url, download=True)
+        )
+        if info is None:
+            return None, None
+        file_path = f"/tmp/{info['title']}.{info.get('ext','mp4')}"
+        return info, file_path
+    except Exception:
+        return None, None
 
 # -------------------- Message Handler --------------------
 @bot.on_message(filters.text & ~filters.edited)
@@ -44,15 +53,16 @@ async def auto_download(client: Client, message: Message):
         return
     status_msg = await message.reply_text("🔄 Downloading media...")
     for url in urls:
-        try:
-            info = await download_media(url)
-            file_path = f"/tmp/{info['title']}.{info.get('ext','mp4')}"
-            caption = f"**Title:** {info.get('title','N/A')}\n" \
-                      f"**Uploader:** {info.get('uploader','N/A')}\n" \
-                      f"**Duration:** {info.get('duration','N/A')} seconds\n" \
-                      f"**View Count:** {info.get('view_count','N/A')}"
+        info, file_path = await download_media(url)
+        if not info or not os.path.exists(file_path):
+            await message.reply_text(f"❌ Failed to download or unsupported link:\n{url}")
+            continue
 
-            # Detect type: video or other
+        caption = f"**Title:** {info.get('title','N/A')}\n" \
+                  f"**Uploader:** {info.get('uploader','N/A')}\n" \
+                  f"**Duration:** {info.get('duration','N/A')} sec\n" \
+                  f"**View Count:** {info.get('view_count','N/A')}"
+        try:
             if info.get('ext') in ["mp4", "mkv", "webm"]:
                 await client.send_video(
                     chat_id=message.chat.id,
@@ -67,9 +77,11 @@ async def auto_download(client: Client, message: Message):
                     caption=caption,
                     reply_markup=BUTTONS
                 )
-            os.remove(file_path)  # Clean up
         except Exception as e:
-            await message.reply_text(f"❌ Failed to download:\n{e}")
+            await message.reply_text(f"❌ Failed to send file:\n{e}")
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
     await status_msg.delete()
 
 # -------------------- Run Bot --------------------
